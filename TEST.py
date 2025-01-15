@@ -137,7 +137,7 @@ def main():
             # Left column: Provider name (green, bold, larger font)
             with col1:
                 st.markdown(
-                    f"<p style='color:white; font-weight:bold; font-size:16px;'>"
+                    f"<p style='color:default; font-weight:bold; font-size:16px;'>"
                     f"{idx}. {provider['Providers']}</p>",
                     unsafe_allow_html=True
                 )
@@ -159,13 +159,13 @@ def main():
 
             # Address on the next line (green text)
             st.markdown(
-                f"<p style='color:white; font-size:14px;'>{provider['Address']}</p>",
+                f"<p style='color:default; font-size:14px;'>{provider['Address']}</p>",
                 unsafe_allow_html=True
             )
 
             # Distance on its own line (green text)
             st.markdown(
-                f"<p style='color:white; font-size:14px;'>Distance: {provider['DistanceMiles']:.2f} miles</p>",
+                f"<p style='color:default; font-size:14px;'>Distance: {provider['DistanceMiles']:.2f} miles</p>",
                 unsafe_allow_html=True
             )
 
