@@ -9,8 +9,7 @@ import os
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords2.csv")
 
-# Replace with your actual Google Geocoding API key (from secrets)
-API_KEY = st.secrets["API_KEY"]
+API_KEY = st.secrets["API_KEY"]  # Must be defined in Streamlit Secrets
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 
@@ -44,25 +43,22 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     R = 3958.8  # Earth radius in miles
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2 +
-         math.cos(math.radians(lat1)) *
-         math.cos(math.radians(lat2)) *
-         math.sin(dlon / 2) ** 2)
+    a = (
+        math.sin(dlat / 2) ** 2
+        + math.cos(math.radians(lat1))
+        * math.cos(math.radians(lat2))
+        * math.sin(dlon / 2) ** 2
+    )
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    return R * c
+    distance = R * c
+    return distance
 
 
 def load_providers(csv_path):
     """
     Read the CSV and return a list of dictionaries:
     [
-      {
-        "Providers": ...,
-        "Address": ...,
-        "Specialty": ...,
-        "Latitude": ...,
-        "Longitude": ...
-      },
+      {"Providers": ..., "Address": ..., "Specialty": ..., "Latitude": ..., "Longitude": ...},
       ...
     ]
     """
@@ -89,10 +85,8 @@ def find_top_5_closest_providers(client_lat, client_lng, providers_list):
     """
     for provider in providers_list:
         dist_miles = haversine_distance(
-            client_lat,
-            client_lng,
-            provider["Latitude"],
-            provider["Longitude"]
+            client_lat, client_lng,
+            provider["Latitude"], provider["Longitude"]
         )
         provider["DistanceMiles"] = dist_miles
 
@@ -106,7 +100,10 @@ def find_top_5_closest_providers(client_lat, client_lng, providers_list):
 
 def main():
     st.title("Find Closest Providers")
-    st.write("Enter a client's address, then press **Enter** or click **Find Providers** to see the top 5 nearby.")
+    st.write(
+        "Enter a client's address, then press **Enter** or click "
+        "**Find Providers** to see the top 5 nearby."
+    )
 
     # Use a Streamlit form so ENTER also submits
     with st.form("provider_form"):
@@ -132,24 +129,48 @@ def main():
 
         # 4. Display results in a cleaner format
         st.success(f"Top 5 closest providers to '{address_input}':")
+
         for idx, provider in enumerate(top_5, start=1):
-            # Build a display string for the provider name + optional specialty
-            if provider["Specialty"]:
-                provider_line = f"{provider['Providers']} - {provider['Specialty']}"
-            else:
-                provider_line = provider["Providers"]
+            # Create two columns side by side:
+            col1, col2 = st.columns([2, 3])  # Adjust ratios as needed
 
-            # Larger/bold provider name with a number
-            st.subheader(f"{idx}. {provider_line}")
+            # Left column: Provider name (green, bold, larger font)
+            with col1:
+                st.markdown(
+                    f"<p style='color:green; font-weight:bold; font-size:16px;'>"
+                    f"{idx}. {provider['Providers']}</p>",
+                    unsafe_allow_html=True
+                )
 
-            # Address on the next line
-            st.write(provider['Address'])
+            # Right column: Specialty (green, bold, slightly smaller font)
+            with col2:
+                if provider["Specialty"]:
+                    st.markdown(
+                        f"<p style='color:green; font-weight:bold; font-size:14px;'>"
+                        f"Specialty: {provider['Specialty']}</p>",
+                        unsafe_allow_html=True
+                    )
+                else:
+                    # If there's no specialty, just leave it blank or handle differently
+                    st.markdown(
+                        "<p style='color:green; font-weight:bold; font-size:14px;'></p>",
+                        unsafe_allow_html=True
+                    )
 
-            # Distance on its own line
-            st.write(f"Distance: {provider['DistanceMiles']:.2f} miles")
+            # Address on the next line (green text)
+            st.markdown(
+                f"<p style='color:green; font-size:14px;'>{provider['Address']}</p>",
+                unsafe_allow_html=True
+            )
 
-            # Add a divider line between results (optional)
-            st.markdown("---")
+            # Distance on its own line (green text)
+            st.markdown(
+                f"<p style='color:green; font-size:14px;'>Distance: {provider['DistanceMiles']:.2f} miles</p>",
+                unsafe_allow_html=True
+            )
+
+            # Add extra spacing between each provider's block
+            st.markdown("<br><br>", unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
