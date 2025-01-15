@@ -7,9 +7,9 @@ import os
 # --- Configuration ---
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords.csv")
+PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords2.csv")
 
-# Replace with your actual Google Geocoding API key
+# Replace with your actual Google Geocoding API key (from secrets)
 API_KEY = st.secrets["API_KEY"]
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
@@ -49,15 +49,20 @@ def haversine_distance(lat1, lon1, lat2, lon2):
          math.cos(math.radians(lat2)) *
          math.sin(dlon / 2) ** 2)
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-    distance = R * c
-    return distance
+    return R * c
 
 
 def load_providers(csv_path):
     """
     Read the CSV and return a list of dictionaries:
     [
-      {"Provider": ..., "Address": ..., "Latitude": ..., "Longitude": ...},
+      {
+        "Providers": ...,
+        "Address": ...,
+        "Specialty": ...,
+        "Latitude": ...,
+        "Longitude": ...
+      },
       ...
     ]
     """
@@ -68,8 +73,9 @@ def load_providers(csv_path):
             lat = float(row["Latitude"]) if row["Latitude"] else 0.0
             lng = float(row["Longitude"]) if row["Longitude"] else 0.0
             providers_data.append({
-                "Provider": row["Provider"],  # Must match your CSV header exactly
-                "Address": row["Address"],
+                "Providers": row.get("Providers", ""),
+                "Address": row.get("Address", ""),
+                "Specialty": row.get("Specialty", ""),
                 "Latitude": lat,
                 "Longitude": lng
             })
@@ -83,8 +89,10 @@ def find_top_5_closest_providers(client_lat, client_lng, providers_list):
     """
     for provider in providers_list:
         dist_miles = haversine_distance(
-            client_lat, client_lng,
-            provider["Latitude"], provider["Longitude"]
+            client_lat,
+            client_lng,
+            provider["Latitude"],
+            provider["Longitude"]
         )
         provider["DistanceMiles"] = dist_miles
 
@@ -125,8 +133,14 @@ def main():
         # 4. Display results in a cleaner format
         st.success(f"Top 5 closest providers to '{address_input}':")
         for idx, provider in enumerate(top_5, start=1):
+            # Build a display string for the provider name + optional specialty
+            if provider["Specialty"]:
+                provider_line = f"{provider['Providers']} - {provider['Specialty']}"
+            else:
+                provider_line = provider["Providers"]
+
             # Larger/bold provider name with a number
-            st.subheader(f"{idx}. {provider['Provider']}")
+            st.subheader(f"{idx}. {provider_line}")
 
             # Address on the next line
             st.write(provider['Address'])
