@@ -10,7 +10,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords.csv")
 
 # Replace with your actual Google Geocoding API key
-API_KEY = "AIzaSyAmyHPY1AnV6loDOdbf_O6Xkg6fr3ziZiE"
+API_KEY = ""
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 
