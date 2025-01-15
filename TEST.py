@@ -2,25 +2,31 @@ import streamlit as st
 import csv
 import requests
 import math
+import os
 
 # --- Configuration ---
+
+# Dynamically get the directory of the current script
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# Build the path to the CSV in the same directory
+PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords.csv")
+
 API_KEY = "AIzaSyAmyHPY1AnV6loDOdbf_O6Xkg6fr3ziZiE"  # Replace with your actual key
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-PROVIDERS_CSV_PATH = r"C:\Users\KMason\Downloads\Providers with Coords.csv"  # Adjust path as needed
 
 
 # --- Helper Functions ---
 
 def geocode_address(address):
     """
-    Returns latitude, longitude of the given address using Google Geocoding API.
-    Returns (None, None) if the geocoding fails.
+    Returns (latitude, longitude) of the given address using the Google Geocoding API.
+    Returns (None, None) if geocoding fails.
     """
     params = {
         "address": address,
         "key": API_KEY
     }
-
     try:
         resp = requests.get(GEOCODE_URL, params=params)
         data = resp.json()
@@ -40,9 +46,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     Calculate the great circle distance in miles between two points
     on the Earth (specified in decimal degrees).
     """
-    # Earth radius in miles
-    R = 3958.8
-
+    R = 3958.8  # Earth radius in miles
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat / 2) ** 2 +
@@ -58,7 +62,7 @@ def load_providers(csv_path):
     """
     Read the CSV and return a list of dictionaries:
     [
-      {"Providers": ..., "Address": ..., "Latitude": ..., "Longitude": ...},
+      {"Provider": ..., "Address": ..., "Latitude": ..., "Longitude": ...},
       ...
     ]
     """
@@ -66,11 +70,10 @@ def load_providers(csv_path):
     with open(csv_path, mode="r", encoding="utf-8") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            # Convert lat/long to floats
             lat = float(row["Latitude"]) if row["Latitude"] else 0.0
             lng = float(row["Longitude"]) if row["Longitude"] else 0.0
             providers_data.append({
-                "Provider": row["Provider"],
+                "Provider": row["Provider"],   # Column name must match CSV
                 "Address": row["Address"],
                 "Latitude": lat,
                 "Longitude": lng
@@ -83,7 +86,7 @@ def find_top_5_closest_providers(client_lat, client_lng, providers_list):
     Given a client's lat/lng and a list of providers with lat/lng,
     returns the top 5 closest providers by Haversine distance.
     """
-    # Calculate distance to each provider
+    # Calculate distance to each provider in miles
     for provider in providers_list:
         dist_miles = haversine_distance(
             client_lat,
