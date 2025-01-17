@@ -78,10 +78,10 @@ def load_providers(csv_path):
     return providers_data
 
 
-def find_top_5_closest_providers(client_lat, client_lng, providers_list):
+def find_top_10_closest_providers(client_lat, client_lng, providers_list):
     """
     Given a client's lat/lng and a list of providers with lat/lng,
-    returns the top 5 closest providers by Haversine distance.
+    returns the top 10 closest providers by Haversine distance.
     """
     for provider in providers_list:
         dist_miles = haversine_distance(
@@ -93,7 +93,7 @@ def find_top_5_closest_providers(client_lat, client_lng, providers_list):
     # Sort by distance ascending
     sorted_providers = sorted(providers_list, key=lambda p: p["DistanceMiles"])
 
-    return sorted_providers[:5]
+    return sorted_providers[:10]
 
 
 # --- Streamlit UI ---
@@ -125,12 +125,12 @@ def main():
         providers_list = load_providers(PROVIDERS_CSV_PATH)
 
         # 3. Find top 5 closest
-        top_5 = find_top_5_closest_providers(client_lat, client_lng, providers_list)
+        top_10 = find_top_10_closest_providers(client_lat, client_lng, providers_list)
 
         # 4. Display results in a cleaner format
-        st.success(f"Top 5 closest providers to '{address_input}':")
+        st.success(f"Top 10 closest providers to '{address_input}':")
 
-        for idx, provider in enumerate(top_5, start=1):
+        for idx, provider in enumerate(top_10, start=1):
             # Create two columns side by side:
             col1, col2 = st.columns([2, 3])  # Adjust ratios as needed
 
