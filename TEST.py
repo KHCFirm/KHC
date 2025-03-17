@@ -102,7 +102,7 @@ def main():
     st.title("Find Closest Providers")
     st.write(
         "Enter a client's address, then press **Enter** or click "
-        "**Find Providers** to see the top 5 nearby."
+        "**Find Providers** to see the top 10 nearby."
     )
 
     # Use a Streamlit form so ENTER also submits
