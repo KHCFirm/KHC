@@ -56,23 +56,20 @@ DEFAULT_MAX_RESULTS = 20  # default remains 20
 # ----------------------------
 # Helpers
 # ----------------------------
-def geocode_address(address: str):
-    """Return (lat, lng) via Google Geocoding API, or (None, None) on failure."""
-    if not API_KEY:
-        st.error("API key missing. Please set API_KEY in Streamlit secrets.")
-        return None, None
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
+def geocode_address_cached(address: str, api_key: str):
+    """Return (lat, lng) via Google Geocoding API, or (None, None) on failure. Cached by address."""
+    if not api_key:
+        return None, None, "API key missing. Please set API_KEY in Streamlit secrets."
     try:
-        resp = requests.get(GEOCODE_URL, params={"address": address, "key": API_KEY}, timeout=15)
+        resp = requests.get(GEOCODE_URL, params={"address": address, "key": api_key}, timeout=15)
         data = resp.json()
         if data.get("status") == "OK":
             loc = data["results"][0]["geometry"]["location"]
-            return loc["lat"], loc["lng"]
-        else:
-            st.error(f"Geocoding failed: {data.get('status')}")
-            return None, None
+            return loc["lat"], loc["lng"], None
+        return None, None, f"Geocoding failed: {data.get('status')}"
     except Exception as e:
-        st.error(f"Exception during geocoding: {e}")
-        return None, None
+        return None, None, f"Exception during geocoding: {e}"
 
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Great-circle distance (miles) between two latitude/longitude points."""
@@ -129,7 +126,7 @@ SPECIALTY_GROUPS = {
 
 def specialty_groups_for_text(s: str):
     """Return the set of group labels that match the given specialty text."""
-    s_low = f" {s.lower()} "  # padding to help catch ' pt ' vs part of words
+    s_low = f" {s.lower()} "
     matches = set()
     for label, needles in SPECIALTY_GROUPS.items():
         for n in needles:
@@ -155,9 +152,10 @@ def filter_by_groups(providers, selected_groups):
     if not selected_groups:
         return providers
     out = []
+    sel = set(selected_groups)
     for p in providers:
         groups = specialty_groups_for_text(p.get("Specialty", ""))
-        if groups & set(selected_groups):
+        if groups & sel:
             out.append(p)
     return out
 
@@ -199,72 +197,78 @@ with st.sidebar:
         help="Change how many providers to show per search."
     )
 
+# Main controls
 col_left, col_right = st.columns([1.2, 1])
 
 with col_left:
     st.subheader("Search by Address")
     address = st.text_input("Client's address", value="", placeholder="123 Main St, City, State")
-    search_clicked = st.button("Find Providers", type="primary", use_container_width=True)
+    # Button kept for UX, but logic below auto-uses the address if it's present.
+    st.button("Find Providers", type="primary", use_container_width=True)
 
 with col_right:
     st.subheader("How it works")
     st.write(
         "- Enter an address to sort by distance.\n"
         "- Use **name** and **specialty groups** to refine results.\n"
-        "- Adjust **Max results** in the sidebar."
+        "- Adjust **Max results** in the sidebar.\n"
+        "- Changes take effect immediately; no need to click again."
     )
 
 # ----------------------------
-# Run search
+# Run search (auto-uses address if present)
 # ----------------------------
-# Start with all, then apply name + group filters
 filtered = filter_by_name(providers_all, name_query)
 filtered = filter_by_groups(filtered, selected_groups)
 
-if search_clicked and not address.strip() and not (name_query or selected_groups):
-    st.warning("Enter an address, or use Name/Specialty filters, or both.")
+has_address = bool(address.strip())
+
+if not has_address and not (name_query or selected_groups):
+    st.info("Use the filters or enter an address to start.")
+    results = []
 else:
-    if search_clicked and address.strip():
-        # Distance-based flow
-        latlng = geocode_address(address)
-        if latlng == (None, None):
-            st.stop()
-        lat, lng = latlng
-        filtered = compute_distances(lat, lng, filtered)
-        filtered.sort(key=lambda p: p.get("DistanceMiles", float("inf")))
-        results = filtered[: int(max_results)]
-        st.success(
-            f"Top {len(results)} provider(s) near **{address}**"
-            + (" (filtered)" if (name_query or selected_groups) else "")
-        )
+    if has_address:
+        lat, lng, geo_err = geocode_address_cached(address.strip(), API_KEY)
+        if geo_err:
+            st.error(geo_err)
+        if lat is not None and lng is not None:
+            filtered = compute_distances(lat, lng, filtered)
+            filtered.sort(key=lambda p: p.get("DistanceMiles", float("inf")))
+            results = filtered[: int(max_results)]
+            st.success(
+                f"Top {len(results)} provider(s) near **{address}**"
+                + (" (filtered)" if (name_query or selected_groups) else "")
+            )
+        else:
+            # Fallback to filter-only if geocode failed
+            filtered.sort(key=lambda p: p["Providers"])
+            results = filtered[: int(max_results)]
+            st.warning(
+                f"Showing {len(results)} provider(s) by name/specialty (address not usable)."
+            )
     else:
         # No address, filter-only flow (alphabetical)
         filtered.sort(key=lambda p: p["Providers"])
         results = filtered[: int(max_results)]
-        if name_query or selected_groups:
-            st.success(f"Showing {len(results)} provider(s) matching your filters (no address provided).")
-        else:
-            # No address, no filters: do not render a giant list—give a nudge.
-            st.info("Use the filters or enter an address to start.")
-            results = []
+        st.success(f"Showing {len(results)} provider(s) matching your filters (no address sorting).")
 
-    # ----------------------------
-    # Render results (thin lines, always show full address)
-    # ----------------------------
-    if results:
-        st.markdown('<div class="results-wrap">', unsafe_allow_html=True)
-        for idx, p in enumerate(results, start=1):
-            groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
-            header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
-            if groups:
-                header += f"<span class='pill'>{groups}</span>"
-            st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
+# ----------------------------
+# Render results (thin lines, always show full address)
+# ----------------------------
+if results:
+    st.markdown('<div class="results-wrap">', unsafe_allow_html=True)
+    for idx, p in enumerate(results, start=1):
+        groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
+        header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
+        if groups:
+            header += f"<span class='pill'>{groups}</span>"
+        st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
 
-            if p.get("Address"):
-                st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
+        if p.get("Address"):
+            st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
 
-            if "DistanceMiles" in p:
-                st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
+        if "DistanceMiles" in p:
+            st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
 
-            st.markdown("</div>", unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
