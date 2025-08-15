@@ -13,19 +13,18 @@ st.set_page_config(
     layout="wide",
 )
 
-# Custom minimal CSS for a more professional look
+# ----------------------------
+# Styles (thinner results, subtle dividers, constrained width)
+# ----------------------------
 st.markdown(
     """
     <style>
-      .app-title { font-size: 32px; font-weight: 700; margin-bottom: 0.2rem; }
-      .app-subtitle { color: #6b7280; margin-bottom: 1.5rem; }
-      .result-card {
-        padding: 0.9rem 1.1rem;
-        border: 1px solid #e5e7eb;
-        border-radius: 12px;
-        margin-bottom: 0.75rem;
-        background: #ffffff;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+      .app-title { font-size: 32px; font-weight: 700; margin-bottom: 0.25rem; }
+      .app-subtitle { color: #6b7280; margin-bottom: 1.25rem; }
+      .results-wrap { max-width: 900px; margin: 0 auto; }  /* keep results from spanning full width */
+      .result-row {
+        padding: 10px 4px;
+        border-bottom: 1px solid #e5e7eb; /* thin line divider */
       }
       .provider-name { font-weight: 700; font-size: 16px; }
       .muted { color: #6b7280; }
@@ -52,7 +51,7 @@ PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords2.csv")
 API_KEY = st.secrets.get("API_KEY")
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
-MAX_RESULTS = 20  # Increased from 10 to 20
+DEFAULT_MAX_RESULTS = 20  # default remains 20
 
 # ----------------------------
 # Helpers
@@ -90,33 +89,77 @@ def load_providers(csv_path: str):
     with open(csv_path, mode="r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            lat = float(row.get("Latitude") or 0.0)
-            lng = float(row.get("Longitude") or 0.0)
+            try:
+                lat = float(row.get("Latitude") or 0.0)
+                lng = float(row.get("Longitude") or 0.0)
+            except ValueError:
+                lat, lng = 0.0, 0.0
             providers.append({
-                "Providers": row.get("Providers", "").strip(),
-                "Address": row.get("Address", "").strip(),
-                "Specialty": row.get("Specialty", "").strip(),
+                "Providers": (row.get("Providers") or "").strip(),
+                "Address": (row.get("Address") or "").strip(),
+                "Specialty": (row.get("Specialty") or "").strip(),
                 "Latitude": lat,
                 "Longitude": lng,
             })
     return providers
 
-def filter_providers(providers, name_query: str = "", specialties=None):
-    """Filter by provider name (contains) and specialty (exact match)."""
-    if specialties is None:
-        specialties = []
-    name_query = (name_query or "").strip().lower()
+# Curated specialty grouping (case-insensitive substring match).
+# Only groups that actually appear in your data will be shown in the UI.
+SPECIALTY_GROUPS = {
+    "Chiro": ["chiro"],
+    "PT": ["physical therapy", "physio", " pt ", " pt", "(pt)"],
+    "Ortho": ["ortho", "orthop"],
+    "Neuro": ["neuro"],
+    "Spine": ["spine", "spinal"],
+    "Foot/Ankle": ["foot", "ankle", "podiat"],
+    "Hand Surgeon": ["hand surgeon", "hand & wrist", "upper extremity", "hand"],
+    "Post-Concussion": ["post-concussion", "concuss", "tbi"],
+    "Heart": ["cardio", "heart"],
+    "Pain Management": ["pain management", "pain med", "interventional pain", "pm&r", "physiat"],
+    "MRI/Imaging": ["mri", "radiology", "imaging", "x-ray", "ct"],
+    "ENT": ["ent", "otolaryng"],
+    "Ophthalmology": ["ophthalm", "eye"],
+    "Dental/Oral": ["dental", "oral", "maxillofacial"],
+    "Primary Care": ["primary care", "internal medicine", "family medicine"],
+    "Urgent Care": ["urgent care"],
+    "Neurosurgery": ["neurosurg"],
+    "Plastic/Reconstructive": ["plastic", "reconstructive"],
+    "Psych/Behavioral": ["psychiat", "psychology", "behavioral"],
+}
 
-    def _match(p):
-        # Name filter (substring)
-        if name_query and name_query not in p["Providers"].lower():
-            return False
-        # Specialty filter
-        if specialties:
-            return (p["Specialty"] in specialties)
-        return True
+def specialty_groups_for_text(s: str):
+    """Return the set of group labels that match the given specialty text."""
+    s_low = f" {s.lower()} "  # padding to help catch ' pt ' vs part of words
+    matches = set()
+    for label, needles in SPECIALTY_GROUPS.items():
+        for n in needles:
+            if n in s_low:
+                matches.add(label)
+                break
+    return matches
 
-    return [p for p in providers if _match(p)]
+def available_specialty_groups(providers):
+    """Return a sorted list of group labels that actually occur in the dataset."""
+    found = set()
+    for p in providers:
+        found |= specialty_groups_for_text(p.get("Specialty", ""))
+    return sorted(found)
+
+def filter_by_name(providers, name_query: str = ""):
+    nq = (name_query or "").strip().lower()
+    if not nq:
+        return providers
+    return [p for p in providers if nq in p["Providers"].lower()]
+
+def filter_by_groups(providers, selected_groups):
+    if not selected_groups:
+        return providers
+    out = []
+    for p in providers:
+        groups = specialty_groups_for_text(p.get("Specialty", ""))
+        if groups & set(selected_groups):
+            out.append(p)
+    return out
 
 def compute_distances(client_lat: float, client_lng: float, providers):
     """Annotate providers with DistanceMiles (float)."""
@@ -128,17 +171,33 @@ def compute_distances(client_lat: float, client_lng: float, providers):
 # UI
 # ----------------------------
 st.markdown('<div class="app-title">Provider Finder</div>', unsafe_allow_html=True)
-st.markdown('<div class="app-subtitle">Find the nearest providers by address and optionally refine by name or specialty.</div>', unsafe_allow_html=True)
+st.markdown('<div class="app-subtitle">Find nearby providers by address; refine by name and grouped specialty.</div>', unsafe_allow_html=True)
 
 # Load data once
 providers_all = load_providers(PROVIDERS_CSV_PATH)
-all_specialties = sorted({p["Specialty"] for p in providers_all if p["Specialty"]})
 
 with st.sidebar:
     st.header("Filters")
     name_query = st.text_input("Provider name contains", value="", placeholder="e.g., Smith or 'Ortho'")
-    selected_specialties = st.multiselect("Specialty", options=all_specialties, default=[])
-    st.caption("Leave filters blank to include all providers.")
+
+    # Build grouped specialty options that actually exist in the dataset
+    group_options = available_specialty_groups(providers_all)
+    selected_groups = st.multiselect(
+        "Specialty groups",
+        options=group_options,
+        default=[],
+        help="These groups match any similar specialty text (e.g., 'Ortho' covers Orthopedics)."
+    )
+
+    st.header("Results")
+    max_results = st.number_input(
+        "Max results",
+        min_value=1,
+        max_value=200,
+        value=DEFAULT_MAX_RESULTS,
+        step=1,
+        help="Change how many providers to show per search."
+    )
 
 col_left, col_right = st.columns([1.2, 1])
 
@@ -148,17 +207,23 @@ with col_left:
     search_clicked = st.button("Find Providers", type="primary", use_container_width=True)
 
 with col_right:
-    st.subheader("Options")
-    st.write(f"Max results: **{MAX_RESULTS}**")
-    show_addresses = st.checkbox("Show full addresses", value=True)
+    st.subheader("How it works")
+    st.write(
+        "- Enter an address to sort by distance.\n"
+        "- Use **name** and **specialty groups** to refine results.\n"
+        "- Adjust **Max results** in the sidebar."
+    )
 
-# Handle searches
-if search_clicked and not address.strip() and not (name_query or selected_specialties):
+# ----------------------------
+# Run search
+# ----------------------------
+# Start with all, then apply name + group filters
+filtered = filter_by_name(providers_all, name_query)
+filtered = filter_by_groups(filtered, selected_groups)
+
+if search_clicked and not address.strip() and not (name_query or selected_groups):
     st.warning("Enter an address, or use Name/Specialty filters, or both.")
 else:
-    # Filter by name/specialty first (works for both address and non-address flows)
-    filtered = filter_providers(providers_all, name_query=name_query, specialties=selected_specialties)
-
     if search_clicked and address.strip():
         # Distance-based flow
         latlng = geocode_address(address)
@@ -167,33 +232,39 @@ else:
         lat, lng = latlng
         filtered = compute_distances(lat, lng, filtered)
         filtered.sort(key=lambda p: p.get("DistanceMiles", float("inf")))
-        results = filtered[:MAX_RESULTS]
-
-        st.success(f"Top {len(results)} provider(s) near **{address}**" + (f" (filtered)" if (name_query or selected_specialties) else ""))
+        results = filtered[: int(max_results)]
+        st.success(
+            f"Top {len(results)} provider(s) near **{address}**"
+            + (" (filtered)" if (name_query or selected_groups) else "")
+        )
     else:
         # No address, filter-only flow (alphabetical)
         filtered.sort(key=lambda p: p["Providers"])
-        results = filtered[:MAX_RESULTS]
-
-        if name_query or selected_specialties:
+        results = filtered[: int(max_results)]
+        if name_query or selected_groups:
             st.success(f"Showing {len(results)} provider(s) matching your filters (no address provided).")
         else:
+            # No address, no filters: do not render a giant list—give a nudge.
             st.info("Use the filters or enter an address to start.")
+            results = []
 
-    # Render results
+    # ----------------------------
+    # Render results (thin lines, always show full address)
+    # ----------------------------
     if results:
+        st.markdown('<div class="results-wrap">', unsafe_allow_html=True)
         for idx, p in enumerate(results, start=1):
-            with st.container():
-                st.markdown('<div class="result-card">', unsafe_allow_html=True)
-                header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
-                if p.get("Specialty"):
-                    header += f"<span class='pill'>{p['Specialty']}</span>"
-                st.markdown(header, unsafe_allow_html=True)
+            groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
+            header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
+            if groups:
+                header += f"<span class='pill'>{groups}</span>"
+            st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
 
-                if show_addresses and p.get("Address"):
-                    st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
+            if p.get("Address"):
+                st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
 
-                if "DistanceMiles" in p:
-                    st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
+            if "DistanceMiles" in p:
+                st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
 
-                st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
