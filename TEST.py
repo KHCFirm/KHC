@@ -3,6 +3,7 @@ import csv
 import math
 import requests
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 # ----------------------------
@@ -15,29 +16,43 @@ st.set_page_config(
 )
 
 # ----------------------------
-# Styles (thinner results, subtle dividers, constrained width)
+# Styles (tight layout, 5-col grid, subtle dividers)
 # ----------------------------
 st.markdown(
     """
     <style>
-      .app-title { font-size: 32px; font-weight: 700; margin-bottom: 0.25rem; }
-      .app-subtitle { color: #6b7280; margin-bottom: 1.25rem; }
-      .results-wrap { max-width: 900px; margin: 0 auto; }  /* keep results from spanning full width */
-      .result-row {
-        padding: 10px 4px;
-        border-bottom: 1px solid #e5e7eb; /* thin line divider */
+      .block-container { padding-top: 0.6rem; padding-bottom: 0.6rem; max-width: 1160px; }
+      .app-title { font-size: 28px; font-weight: 700; margin-bottom: 0.15rem; }
+      .app-subtitle { color: #6b7280; margin-bottom: 0.8rem; }
+      .results-wrap { max-width: 1080px; margin: 0 auto; }
+      .result-card {
+        padding: 8px 6px;
+        border-bottom: 1px solid #e5e7eb;
+        min-height: 88px;
       }
-      .provider-name { font-weight: 700; font-size: 16px; }
-      .muted { color: #6b7280; }
+      .provider-name { font-weight: 700; font-size: 15px; }
+      .muted { color: #6b7280; font-size: 13px; }
       .pill {
         display: inline-block;
         padding: 2px 8px;
         border-radius: 9999px;
-        font-size: 12px;
+        font-size: 11px;
         background: #f3f4f6;
         color: #374151;
         margin-left: 8px;
       }
+      /* Make the address button look like a clean link */
+      .stButton>button.addr-btn {
+        background: transparent !important;
+        border: none !important;
+        color: #2563eb !important;
+        padding: 0 !important;
+        height: auto !important;
+        min-height: 0 !important;
+        font-size: 13px !important;
+        text-align: left !important;
+      }
+      .stButton>button.addr-btn:hover { text-decoration: underline; }
     </style>
     """,
     unsafe_allow_html=True
@@ -53,6 +68,10 @@ API_KEY = st.secrets.get("API_KEY")
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 DEFAULT_MAX_RESULTS = 20  # default remains 20
+
+# Keep selection across interactions
+if "selected_idx" not in st.session_state:
+    st.session_state.selected_idx = None
 
 # ----------------------------
 # Helpers
@@ -76,7 +95,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     """Great-circle distance (miles) between two latitude/longitude points."""
     R = 3958.8
     dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lat2 - lon1)
+    dlon = math.radians(lon2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
@@ -102,11 +121,10 @@ def load_providers(csv_path: str):
     return providers
 
 # Curated specialty grouping (case-insensitive substring match).
-# Only groups that actually appear in your data will be shown in the UI.
 SPECIALTY_GROUPS = {
     "Chiro": ["chiro"],
     "PT": ["physical therapy", "physio", " pt ", " pt", "(pt)"],
-    "Ortho": ["ortho, ", " ortho", "orthop"],
+    "Ortho": ["ortho", "orthop"],
     "Neuro": ["neuro"],
     "Spine": ["spine", "spinal"],
     "Foot/Ankle": ["foot", "ankle", "podiat"],
@@ -166,6 +184,23 @@ def compute_distances(client_lat: float, client_lng: float, providers):
         p["DistanceMiles"] = haversine_distance(client_lat, client_lng, p["Latitude"], p["Longitude"])
     return providers
 
+def calc_view_state(points, fallback_lat=39.5, fallback_lng=-98.35, selected=None):
+    """Simple center/zoom heuristic to fit data; center on selected if provided."""
+    if selected is not None:
+        return pdk.ViewState(latitude=selected[0], longitude=selected[1], zoom=12, pitch=0)
+    if not points:
+        return pdk.ViewState(latitude=fallback_lat, longitude=fallback_lng, zoom=4.2, pitch=0)
+    lats = [p["lat"] for p in points]
+    lngs = [p["lon"] for p in points]
+    lat_c = sum(lats) / len(lats)
+    lng_c = sum(lngs) / len(lngs)
+    # crude zoom based on spread
+    lat_span = max(lats) - min(lats) if len(lats) > 1 else 0.05
+    lng_span = max(lngs) - min(lngs) if len(lngs) > 1 else 0.05
+    span = max(lat_span, lng_span)
+    zoom = 11 if span < 0.02 else 10 if span < 0.05 else 9 if span < 0.1 else 8 if span < 0.2 else 7 if span < 0.5 else 6 if span < 1 else 5
+    return pdk.ViewState(latitude=lat_c, longitude=lng_c, zoom=zoom, pitch=0)
+
 # ----------------------------
 # UI
 # ----------------------------
@@ -179,7 +214,6 @@ with st.sidebar:
     st.header("Filters")
     name_query = st.text_input("Provider name contains", value="", placeholder="e.g., Smith or 'Ortho'")
 
-    # Build grouped specialty options that actually exist in the dataset
     group_options = available_specialty_groups(providers_all)
     selected_groups = st.multiselect(
         "Specialty groups",
@@ -206,12 +240,10 @@ with st.sidebar:
 
 # Main controls
 col_left, col_right = st.columns([1.2, 1])
-
 with col_left:
     st.subheader("Search by Address")
     address = st.text_input("Client's address", value="", placeholder="123 Main St, City, State")
-    # Button kept for UX; address is auto-used if present.
-    st.button("Find Providers", type="primary", use_container_width=True)
+    st.button("Find Providers", type="primary", use_container_width=True)  # kept for UX
 
 with col_right:
     st.subheader("How it works")
@@ -233,13 +265,14 @@ has_address = bool(address.strip())
 if not has_address and not (name_query or selected_groups):
     st.info("Use the filters or enter an address to start.")
     results = []
+    client_lat = client_lng = None
 else:
     if has_address:
-        lat, lng, geo_err = geocode_address_cached(address.strip(), API_KEY)
+        client_lat, client_lng, geo_err = geocode_address_cached(address.strip(), API_KEY)
         if geo_err:
             st.error(geo_err)
-        if lat is not None and lng is not None:
-            filtered = compute_distances(lat, lng, filtered)
+        if client_lat is not None and client_lng is not None:
+            filtered = compute_distances(client_lat, client_lng, filtered)
             filtered.sort(key=lambda p: p.get("DistanceMiles", float("inf")))
             results = filtered[: int(max_results)]
             st.success(
@@ -247,56 +280,138 @@ else:
                 + (" (filtered)" if (name_query or selected_groups) else "")
             )
         else:
-            # Fallback to filter-only if geocode failed
             filtered.sort(key=lambda p: p["Providers"])
             results = filtered[: int(max_results)]
-            st.warning(
-                f"Showing {len(results)} provider(s) by name/specialty (address not usable)."
-            )
+            st.warning("Showing providers by name/specialty (address not usable).")
     else:
-        # No address, filter-only flow (alphabetical)
+        client_lat = client_lng = None
         filtered.sort(key=lambda p: p["Providers"])
         results = filtered[: int(max_results)]
         st.success(f"Showing {len(results)} provider(s) matching your filters (no address sorting).")
 
 # ----------------------------
-# Map (optional)
-# ----------------------------
-if results and show_map:
-    map_points = []
-    for p in results:
-        lat = p.get("Latitude")
-        lon = p.get("Longitude")
-        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and lat != 0.0 and lon != 0.0:
-            map_points.append({"lat": lat, "lon": lon})
-    if map_points:
-        st.map(pd.DataFrame(map_points))
-
-# ----------------------------
-# Render results in 3 columns (thin lines, always show full address)
+# Results grid: 5 columns per row
+# Clicking the address sets selected_idx to highlight on the map
 # ----------------------------
 if results:
     st.markdown('<div class="results-wrap">', unsafe_allow_html=True)
 
-    # Display in rows of 3: 1 2 3 / 4 5 6 / 7 8 9 ...
-    for i in range(0, len(results), 3):
-        cols = st.columns(3, gap="small")
-        row = results[i:i+3]
+    for i in range(0, len(results), 5):
+        cols = st.columns(5, gap="small")
+        row = results[i:i+5]
         for j, p in enumerate(row):
             idx = i + j + 1
+            groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
             with cols[j]:
-                groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
-                header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
-                if groups:
-                    header += f"<span class='pill'>{groups}</span>"
-                st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
-
-                if p.get("Address"):
-                    st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
-
+                st.markdown(
+                    f"<div class='result-card'><span class='provider-name'>{idx}. {p['Providers']}</span>"
+                    + (f"<span class='pill'>{groups}</span>" if groups else "")
+                    + "</div>",
+                    unsafe_allow_html=True
+                )
+                # Address as a "link-like" button to trigger highlight
+                clicked = st.button(
+                    p.get("Address", "No address listed") or "No address listed",
+                    key=f"addr_{idx}",
+                    help="Click to highlight this provider on the map",
+                    use_container_width=True
+                )
+                # Style the last-created button as a link
+                st.markdown(
+                    "<script>var btns = window.parent.document.querySelectorAll('.stButton button');"
+                    "if(btns && btns.length) { btns[btns.length-1].classList.add('addr-btn'); }</script>",
+                    unsafe_allow_html=True
+                )
                 if "DistanceMiles" in p:
                     st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
 
-                st.markdown("</div>", unsafe_allow_html=True)
+                if clicked:
+                    st.session_state.selected_idx = idx
 
     st.markdown('</div>', unsafe_allow_html=True)
+
+# ----------------------------
+# Map (below the grid), uses pydeck for colors, tooltips, highlight
+# - Client address pin: distinct color
+# - Provider pins: show result number on hover
+# - Selected provider (via grid click): larger & brighter
+# ----------------------------
+if results and show_map:
+    # Build points for providers with valid coords
+    points = []
+    selected_point = None
+    for k, p in enumerate(results, start=1):
+        lat = p.get("Latitude")
+        lon = p.get("Longitude")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and lat != 0.0 and lon != 0.0:
+            is_selected = (st.session_state.selected_idx == k)
+            color = [33, 115, 205]  # default blue-ish
+            radius = 65
+            if is_selected:
+                color = [255, 140, 0]   # orange for selected
+                radius = 110
+                selected_point = (lat, lon)
+            points.append({
+                "lat": lat,
+                "lon": lon,
+                "Providers": p.get("Providers", ""),
+                "Address": p.get("Address", ""),
+                "Distance": f"{p.get('DistanceMiles', float('nan')):.2f} mi" if "DistanceMiles" in p else "",
+                "ResultNo": k,
+                "color": color,
+                "radius": radius,
+            })
+
+    df_points = pd.DataFrame(points)
+
+    # Client address layer (if available)
+    client_layer = None
+    selected_center = selected_point
+    if client_lat is not None and client_lng is not None:
+        client_df = pd.DataFrame([{"lat": client_lat, "lon": client_lng}])
+        client_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=client_df,
+            get_position="[lon, lat]",
+            get_fill_color=[200, 30, 0],  # distinct red-ish color for client
+            get_radius=120,
+            pickable=False,
+            stroked=True,
+            get_line_color=[255, 255, 255],
+            line_width_min_pixels=1,
+        )
+        if selected_center is None:
+            selected_center = (client_lat, client_lng)
+
+    # Providers layer
+    providers_layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=df_points,
+        get_position="[lon, lat]",
+        get_fill_color="color",
+        get_radius="radius",
+        pickable=True,
+        stroked=True,
+        get_line_color=[255, 255, 255],
+        line_width_min_pixels=1,
+    )
+
+    view = calc_view_state(
+        [{"lat": r["lat"], "lon": r["lon"]} for r in points],
+        selected=selected_center
+    )
+
+    tooltip = {
+        "html": "<b>{ResultNo}. {Providers}</b><br/>{Address}<br/>{Distance}",
+        "style": {"backgroundColor": "white", "color": "black"}
+    }
+
+    deck = pdk.Deck(
+        map_style="mapbox://styles/mapbox/light-v9",
+        initial_view_state=view,
+        layers=[l for l in [client_layer, providers_layer] if l is not None],
+        tooltip=tooltip,
+    )
+
+    # Keep map height modest to fit without scrolling on typical screens
+    st.pydeck_chart(deck, use_container_width=True, height=360)
