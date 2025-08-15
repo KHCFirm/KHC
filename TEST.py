@@ -2,6 +2,7 @@ import os
 import csv
 import math
 import requests
+import pandas as pd
 import streamlit as st
 
 # ----------------------------
@@ -75,7 +76,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     """Great-circle distance (miles) between two latitude/longitude points."""
     R = 3958.8
     dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
+    dlon = math.radians(lat2 - lon1)
     a = math.sin(dlat / 2) ** 2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
@@ -105,7 +106,7 @@ def load_providers(csv_path: str):
 SPECIALTY_GROUPS = {
     "Chiro": ["chiro"],
     "PT": ["physical therapy", "physio", " pt ", " pt", "(pt)"],
-    "Ortho": ["ortho", "orthop"],
+    "Ortho": ["ortho, ", " ortho", "orthop"],
     "Neuro": ["neuro"],
     "Spine": ["spine", "spinal"],
     "Foot/Ankle": ["foot", "ankle", "podiat"],
@@ -197,13 +198,19 @@ with st.sidebar:
         help="Change how many providers to show per search."
     )
 
+    show_map = st.checkbox(
+        "Show map of results",
+        value=True,
+        help="Plot the current results as pins (only providers with valid coordinates are shown)."
+    )
+
 # Main controls
 col_left, col_right = st.columns([1.2, 1])
 
 with col_left:
     st.subheader("Search by Address")
     address = st.text_input("Client's address", value="", placeholder="123 Main St, City, State")
-    # Button kept for UX, but logic below auto-uses the address if it's present.
+    # Button kept for UX; address is auto-used if present.
     st.button("Find Providers", type="primary", use_container_width=True)
 
 with col_right:
@@ -212,7 +219,7 @@ with col_right:
         "- Enter an address to sort by distance.\n"
         "- Use **name** and **specialty groups** to refine results.\n"
         "- Adjust **Max results** in the sidebar.\n"
-        "- Changes take effect immediately; no need to click again."
+        "- Optionally display the results on a map."
     )
 
 # ----------------------------
@@ -253,22 +260,43 @@ else:
         st.success(f"Showing {len(results)} provider(s) matching your filters (no address sorting).")
 
 # ----------------------------
-# Render results (thin lines, always show full address)
+# Map (optional)
+# ----------------------------
+if results and show_map:
+    map_points = []
+    for p in results:
+        lat = p.get("Latitude")
+        lon = p.get("Longitude")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) and lat != 0.0 and lon != 0.0:
+            map_points.append({"lat": lat, "lon": lon})
+    if map_points:
+        st.map(pd.DataFrame(map_points))
+
+# ----------------------------
+# Render results in 3 columns (thin lines, always show full address)
 # ----------------------------
 if results:
     st.markdown('<div class="results-wrap">', unsafe_allow_html=True)
-    for idx, p in enumerate(results, start=1):
-        groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
-        header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
-        if groups:
-            header += f"<span class='pill'>{groups}</span>"
-        st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
 
-        if p.get("Address"):
-            st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
+    # Display in rows of 3: 1 2 3 / 4 5 6 / 7 8 9 ...
+    for i in range(0, len(results), 3):
+        cols = st.columns(3, gap="small")
+        row = results[i:i+3]
+        for j, p in enumerate(row):
+            idx = i + j + 1
+            with cols[j]:
+                groups = " / ".join(sorted(specialty_groups_for_text(p.get("Specialty", ""))))
+                header = f"<span class='provider-name'>{idx}. {p['Providers']}</span>"
+                if groups:
+                    header += f"<span class='pill'>{groups}</span>"
+                st.markdown(f"<div class='result-row'>{header}", unsafe_allow_html=True)
 
-        if "DistanceMiles" in p:
-            st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
+                if p.get("Address"):
+                    st.markdown(f"<div class='muted'>{p['Address']}</div>", unsafe_allow_html=True)
 
-        st.markdown("</div>", unsafe_allow_html=True)
+                if "DistanceMiles" in p:
+                    st.markdown(f"<div class='muted'>Distance: {p['DistanceMiles']:.2f} miles</div>", unsafe_allow_html=True)
+
+                st.markdown("</div>", unsafe_allow_html=True)
+
     st.markdown('</div>', unsafe_allow_html=True)
