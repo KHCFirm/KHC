@@ -16,19 +16,22 @@ st.set_page_config(
 )
 
 # ----------------------------
-# Styles (tight layout, 5-col grid, subtle dividers)
+# Styles (full-width, tight spacing, 5-col grid)
 # ----------------------------
 st.markdown(
     """
     <style>
-      .block-container { padding-top: 0.6rem; padding-bottom: 0.6rem; max-width: 1160px; }
-      .app-title { font-size: 28px; font-weight: 700; margin-bottom: 0.15rem; }
-      .app-subtitle { color: #6b7280; margin-bottom: 0.8rem; }
-      .results-wrap { max-width: 1080px; margin: 0 auto; }
+      /* Use the full screen width and reduce padding */
+      .block-container { padding: 0.5rem 0.75rem 0.5rem 0.75rem; max-width: 100% !important; }
+      /* Sidebar width a bit tighter to give content more room */
+      section[data-testid="stSidebar"] { width: 300px !important; }
+      .app-title { font-size: 28px; font-weight: 700; margin-bottom: 0.1rem; }
+      .app-subtitle { color: #6b7280; margin-bottom: 0.6rem; }
+      .results-wrap { width: 100%; margin: 0 auto; }
       .result-card {
-        padding: 8px 6px;
+        padding: 6px 4px 2px 4px;
         border-bottom: 1px solid #e5e7eb;
-        min-height: 88px;
+        min-height: 78px;
       }
       .provider-name { font-weight: 700; font-size: 15px; }
       .muted { color: #6b7280; font-size: 13px; }
@@ -65,8 +68,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords2.csv")
 
 API_KEY = st.secrets.get("API_KEY")
-GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+# Optional: if you add MAPBOX_TOKEN to secrets, we’ll use Mapbox; otherwise we use CARTO (no token needed).
+MAPBOX_TOKEN = st.secrets.get("MAPBOX_TOKEN")
 
+GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 DEFAULT_MAX_RESULTS = 20  # default remains 20
 
 # Keep selection across interactions
@@ -185,7 +190,7 @@ def compute_distances(client_lat: float, client_lng: float, providers):
     return providers
 
 def calc_view_state(points, fallback_lat=39.5, fallback_lng=-98.35, selected=None):
-    """Simple center/zoom heuristic to fit data; center on selected if provided."""
+    """Center/zoom heuristic; center on selected if provided."""
     if selected is not None:
         return pdk.ViewState(latitude=selected[0], longitude=selected[1], zoom=12, pitch=0)
     if not points:
@@ -194,7 +199,6 @@ def calc_view_state(points, fallback_lat=39.5, fallback_lng=-98.35, selected=Non
     lngs = [p["lon"] for p in points]
     lat_c = sum(lats) / len(lats)
     lng_c = sum(lngs) / len(lngs)
-    # crude zoom based on spread
     lat_span = max(lats) - min(lats) if len(lats) > 1 else 0.05
     lng_span = max(lngs) - min(lngs) if len(lngs) > 1 else 0.05
     span = max(lat_span, lng_span)
@@ -239,7 +243,7 @@ with st.sidebar:
     )
 
 # Main controls
-col_left, col_right = st.columns([1.2, 1])
+col_left, col_right = st.columns([1.6, 1])
 with col_left:
     st.subheader("Search by Address")
     address = st.text_input("Client's address", value="", placeholder="123 Main St, City, State")
@@ -290,7 +294,7 @@ else:
         st.success(f"Showing {len(results)} provider(s) matching your filters (no address sorting).")
 
 # ----------------------------
-# Results grid: 5 columns per row
+# Results grid: 5 columns per row (full-width)
 # Clicking the address sets selected_idx to highlight on the map
 # ----------------------------
 if results:
@@ -309,7 +313,6 @@ if results:
                     + "</div>",
                     unsafe_allow_html=True
                 )
-                # Address as a "link-like" button to trigger highlight
                 clicked = st.button(
                     p.get("Address", "No address listed") or "No address listed",
                     key=f"addr_{idx}",
@@ -331,10 +334,9 @@ if results:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ----------------------------
-# Map (below the grid), uses pydeck for colors, tooltips, highlight
-# - Client address pin: distinct color
-# - Provider pins: show result number on hover
-# - Selected provider (via grid click): larger & brighter
+# Map (below the grid) with basemap fix:
+# - If MAPBOX_TOKEN is available, use Mapbox
+# - Otherwise use CARTO provider (no token required)
 # ----------------------------
 if results and show_map:
     # Build points for providers with valid coords
@@ -374,7 +376,7 @@ if results and show_map:
             data=client_df,
             get_position="[lon, lat]",
             get_fill_color=[200, 30, 0],  # distinct red-ish color for client
-            get_radius=120,
+            get_radius=140,
             pickable=False,
             stroked=True,
             get_line_color=[255, 255, 255],
@@ -396,22 +398,33 @@ if results and show_map:
         line_width_min_pixels=1,
     )
 
-    view = calc_view_state(
-        [{"lat": r["lat"], "lon": r["lon"]} for r in points],
-        selected=selected_center
-    )
-
-    tooltip = {
-        "html": "<b>{ResultNo}. {Providers}</b><br/>{Address}<br/>{Distance}",
-        "style": {"backgroundColor": "white", "color": "black"}
+    # Decide basemap provider
+    deck_kwargs = {
+        "initial_view_state": calc_view_state(
+            [{"lat": r["lat"], "lon": r["lon"]} for r in points],
+            selected=selected_center
+        ),
+        "layers": [l for l in [client_layer, providers_layer] if l is not None],
+        "tooltip": {
+            "html": "<b>{ResultNo}. {Providers}</b><br/>{Address}<br/>{Distance}",
+            "style": {"backgroundColor": "white", "color": "black"},
+        },
     }
 
-    deck = pdk.Deck(
-        map_style="mapbox://styles/mapbox/light-v9",
-        initial_view_state=view,
-        layers=[l for l in [client_layer, providers_layer] if l is not None],
-        tooltip=tooltip,
-    )
+    if MAPBOX_TOKEN:
+        # Use Mapbox if token provided
+        pdk.settings.mapbox_api_key = MAPBOX_TOKEN
+        deck = pdk.Deck(
+            map_provider="mapbox",
+            map_style="mapbox://styles/mapbox/streets-v12",
+            **deck_kwargs,
+        )
+    else:
+        # Tokenless CARTO basemap
+        deck = pdk.Deck(
+            map_provider="carto",
+            map_style="light",
+            **deck_kwargs,
+        )
 
-    # Keep map height modest to fit without scrolling on typical screens
-    st.pydeck_chart(deck, use_container_width=True, height=360)
+    st.pydeck_chart(deck, use_container_width=True, height=520)
