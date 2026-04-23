@@ -133,7 +133,7 @@ SPECIALTY_GROUPS = {
     "Neuro": ["neuro"],
     "Spine": ["spine", "spinal"],
     "Foot/Ankle": ["foot", "ankle", "podiat"],
-    "Hand Surgeon": ["hand surgeon", "hand & wrist", "upper extremity", "hand"],
+    "Hand Surgeon": ["hand surgeon", "hand & wrist", "upper extremity", "hand", "hand/wrist"],
     "Post-Concussion": ["post-concussion", "concuss", "tbi"],
     "Heart": ["cardio", "heart"],
     "Pain Management": ["pain management", "pain med", "interventional pain", "pm&r", "physiat"],
@@ -146,6 +146,7 @@ SPECIALTY_GROUPS = {
     "Neurosurgery": ["neurosurg"],
     "Plastic/Reconstructive": ["plastic", "reconstructive"],
     "Psych/Behavioral": ["psychiat", "psychology", "behavioral"],
+    "Extremities": ["hand", "wrist", "extremity", "extremities", "extrem", "foot", "ankle"],
 }
 
 def specialty_groups_for_text(s: str):
