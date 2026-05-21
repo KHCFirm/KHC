@@ -138,7 +138,6 @@ SPECIALTY_GROUPS = {
     "Heart": ["cardio", "heart"],
     "Pain Management": ["pain management", "pain med", "interventional pain", "pm&r", "physiat"],
     "MRI/Imaging": ["mri", "radiology", "imaging", "x-ray", "ct"],
-    "ENT": ["ent", "otolaryng"],
     "Ophthalmology": ["ophthalm", "eye"],
     "Dental/Oral": ["dental", "oral", "maxillofacial"],
     "Primary Care": ["primary care", "internal medicine", "family medicine"],
