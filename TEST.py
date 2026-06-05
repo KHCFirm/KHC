@@ -146,7 +146,7 @@ SPECIALTY_GROUPS = {
     "Plastic/Reconstructive": ["plastic", "reconstructive"],
     "Psych/Behavioral": ["psychiat", "psychology", "behavioral"],
     "Extremities": ["hand", "wrist", "extremity", "extremities", "extrem", "foot", "ankle"],
-    "ENT": ["ENT"],
+    "ENT": ["ent"],
 }
 
 def specialty_groups_for_text(s: str):
