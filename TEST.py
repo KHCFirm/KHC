@@ -17,25 +17,46 @@ st.set_page_config(
 )
 
 # ----------------------------
-# Styles (full-width, tight spacing, 5-col grid)
+# Styles
 # ----------------------------
 st.markdown(
     """
     <style>
-      /* Use the full screen width and reduce padding */
       .block-container { padding: 0.5rem 0.75rem 0.5rem 0.75rem; max-width: 100% !important; }
-      /* Sidebar width a bit tighter to give content more room */
       section[data-testid="stSidebar"] { width: 300px !important; }
-      .app-title { font-size: 28px; font-weight: 700; margin-bottom: 0.1rem; }
-      .app-subtitle { color: #6b7280; margin-bottom: 0.6rem; }
-      .results-wrap { width: 100%; margin: 0 auto; }
+
+      .app-title {
+        font-size: 28px;
+        font-weight: 700;
+        margin-bottom: 0.1rem;
+      }
+
+      .app-subtitle {
+        color: #6b7280;
+        margin-bottom: 0.6rem;
+      }
+
+      .results-wrap {
+        width: 100%;
+        margin: 0 auto;
+      }
+
       .result-card {
         padding: 6px 4px 2px 4px;
         border-bottom: 1px solid #e5e7eb;
         min-height: 78px;
       }
-      .provider-name { font-weight: 700; font-size: 15px; }
-      .muted { color: #6b7280; font-size: 13px; }
+
+      .provider-name {
+        font-weight: 700;
+        font-size: 15px;
+      }
+
+      .muted {
+        color: #6b7280;
+        font-size: 13px;
+      }
+
       .pill {
         display: inline-block;
         padding: 2px 8px;
@@ -45,7 +66,7 @@ st.markdown(
         color: #374151;
         margin-left: 8px;
       }
-      /* Make the address button look like a clean link */
+
       .stButton>button.addr-btn {
         background: transparent !important;
         border: none !important;
@@ -56,7 +77,10 @@ st.markdown(
         font-size: 13px !important;
         text-align: left !important;
       }
-      .stButton>button.addr-btn:hover { text-decoration: underline; }
+
+      .stButton>button.addr-btn:hover {
+        text-decoration: underline;
+      }
     </style>
     """,
     unsafe_allow_html=True
@@ -69,11 +93,10 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROVIDERS_CSV_PATH = os.path.join(SCRIPT_DIR, "Providers with Coords2.csv")
 
 API_KEY = st.secrets.get("API_KEY")
-# Optional: if you add MAPBOX_TOKEN to secrets, we’ll use Mapbox; otherwise we use CARTO (no token needed).
 MAPBOX_TOKEN = st.secrets.get("MAPBOX_TOKEN")
 
 GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
-DEFAULT_MAX_RESULTS = 20  # default remains 20
+DEFAULT_MAX_RESULTS = 20
 
 # Keep selection across interactions
 if "selected_idx" not in st.session_state:
@@ -84,49 +107,75 @@ if "selected_idx" not in st.session_state:
 # ----------------------------
 @st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
 def geocode_address_cached(address: str, api_key: str):
-    """Return (lat, lng) via Google Geocoding API, or (None, None) on failure. Cached by address."""
+    """Return (lat, lng) via Google Geocoding API, or (None, None) on failure."""
     if not api_key:
         return None, None, "API key missing. Please set API_KEY in Streamlit secrets."
+
     try:
-        resp = requests.get(GEOCODE_URL, params={"address": address, "key": api_key}, timeout=15)
+        resp = requests.get(
+            GEOCODE_URL,
+            params={"address": address, "key": api_key},
+            timeout=15
+        )
         data = resp.json()
+
         if data.get("status") == "OK":
             loc = data["results"][0]["geometry"]["location"]
             return loc["lat"], loc["lng"], None
+
         return None, None, f"Geocoding failed: {data.get('status')}"
+
     except Exception as e:
         return None, None, f"Exception during geocoding: {e}"
 
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """Great-circle distance (miles) between two latitude/longitude points."""
+    """Great-circle distance in miles between two latitude/longitude points."""
     R = 3958.8
+
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
+
     a = (
         math.sin(dlat / 2) ** 2
         + math.cos(math.radians(lat1))
         * math.cos(math.radians(lat2))
         * math.sin(dlon / 2) ** 2
     )
+
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
     return R * c
+
+def clean_csv_value(value):
+    """Clean CSV text values, including accidental wrapping quotes."""
+    if value is None:
+        return ""
+
+    value = str(value).strip()
+
+    if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+        value = value[1:-1].strip()
+
+    return value
 
 def load_providers(csv_path: str):
     """Load providers from CSV into a list of dicts."""
     providers = []
-    with open(csv_path, mode="r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
+
+    with open(csv_path, mode="r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f, skipinitialspace=True)
+
         for row in reader:
             try:
-                lat = float(row.get("Latitude") or 0.0)
-                lng = float(row.get("Longitude") or 0.0)
+                lat = float(clean_csv_value(row.get("Latitude")) or 0.0)
+                lng = float(clean_csv_value(row.get("Longitude")) or 0.0)
             except ValueError:
                 lat, lng = 0.0, 0.0
 
             providers.append({
-                "Providers": (row.get("Providers") or "").strip(),
-                "Address": (row.get("Address") or "").strip(),
-                "Specialty": (row.get("Specialty") or "").strip(),
+                "Providers": clean_csv_value(row.get("Providers")),
+                "Address": clean_csv_value(row.get("Address")),
+                "Specialty": clean_csv_value(row.get("Specialty")),
                 "Latitude": lat,
                 "Longitude": lng,
             })
@@ -137,7 +186,7 @@ def load_providers(csv_path: str):
 # Specialty Grouping
 # ----------------------------
 # Uses regex patterns instead of loose substring matching.
-# This prevents "ENT" from matching the end of words like "management".
+# This prevents ENT from matching the end of words like management.
 SPECIALTY_GROUPS = {
     "Chiro": [
         r"\bchiro\b",
@@ -260,7 +309,7 @@ SPECIALTY_GROUPS = {
 
 def specialty_groups_for_text(s: str):
     """Return the set of group labels that match the given specialty text."""
-    s_low = (s or "").lower()
+    s_low = clean_csv_value(s).lower()
     matches = set()
 
     for label, patterns in SPECIALTY_GROUPS.items():
@@ -274,15 +323,22 @@ def specialty_groups_for_text(s: str):
 def available_specialty_groups(providers):
     """Return a sorted list of group labels that actually occur in the dataset."""
     found = set()
+
     for p in providers:
         found |= specialty_groups_for_text(p.get("Specialty", ""))
+
     return sorted(found)
 
 def filter_by_name(providers, name_query: str = ""):
     nq = (name_query or "").strip().lower()
+
     if not nq:
         return providers
-    return [p for p in providers if nq in p["Providers"].lower()]
+
+    return [
+        p for p in providers
+        if nq in p["Providers"].lower()
+    ]
 
 def filter_by_groups(providers, selected_groups):
     if not selected_groups:
@@ -293,13 +349,14 @@ def filter_by_groups(providers, selected_groups):
 
     for p in providers:
         groups = specialty_groups_for_text(p.get("Specialty", ""))
+
         if groups & sel:
             out.append(p)
 
     return out
 
 def compute_distances(client_lat: float, client_lng: float, providers):
-    """Annotate providers with DistanceMiles (float)."""
+    """Annotate providers with DistanceMiles."""
     for p in providers:
         p["DistanceMiles"] = haversine_distance(
             client_lat,
@@ -307,10 +364,11 @@ def compute_distances(client_lat: float, client_lng: float, providers):
             p["Latitude"],
             p["Longitude"]
         )
+
     return providers
 
 def calc_view_state(points, fallback_lat=39.5, fallback_lng=-98.35, selected=None):
-    """Center/zoom heuristic; center on selected if provided."""
+    """Center/zoom heuristic, center on selected if provided."""
     if selected is not None:
         return pdk.ViewState(
             latitude=selected[0],
@@ -367,7 +425,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Load data once
 providers_all = load_providers(PROVIDERS_CSV_PATH)
 
 with st.sidebar:
@@ -376,7 +433,7 @@ with st.sidebar:
     name_query = st.text_input(
         "Provider name contains",
         value="",
-        placeholder="e.g., Smith or 'Ortho'"
+        placeholder="e.g., Smith or Ortho"
     )
 
     group_options = available_specialty_groups(providers_all)
@@ -385,7 +442,7 @@ with st.sidebar:
         "Specialty groups",
         options=group_options,
         default=[],
-        help="These groups match any similar specialty text, e.g., 'Ortho' covers Orthopedics."
+        help="These groups match any similar specialty text, e.g., Ortho covers Orthopedics."
     )
 
     st.header("Results")
@@ -405,7 +462,9 @@ with st.sidebar:
         help="Plot the current results as pins. Only providers with valid coordinates are shown."
     )
 
-# Main controls
+# ----------------------------
+# Main Controls
+# ----------------------------
 col_left, col_right = st.columns([1.6, 1])
 
 with col_left:
@@ -421,7 +480,7 @@ with col_left:
         "Find Providers",
         type="primary",
         use_container_width=True
-    )  # kept for UX
+    )
 
 with col_right:
     st.subheader("How it works")
@@ -434,7 +493,7 @@ with col_right:
     )
 
 # ----------------------------
-# Run search (auto-uses address if present)
+# Run Search
 # ----------------------------
 filtered = filter_by_name(providers_all, name_query)
 filtered = filter_by_groups(filtered, selected_groups)
@@ -445,6 +504,7 @@ if not has_address and not (name_query or selected_groups):
     st.info("Use the filters or enter an address to start.")
     results = []
     client_lat = client_lng = None
+
 else:
     if has_address:
         client_lat, client_lng, geo_err = geocode_address_cached(
@@ -464,10 +524,12 @@ else:
                 f"Top {len(results)} provider(s) near **{address}**"
                 + (" (filtered)" if (name_query or selected_groups) else "")
             )
+
         else:
             filtered.sort(key=lambda p: p["Providers"])
             results = filtered[: int(max_results)]
             st.warning("Showing providers by name/specialty because the address was not usable.")
+
     else:
         client_lat = client_lng = None
         filtered.sort(key=lambda p: p["Providers"])
@@ -478,8 +540,7 @@ else:
         )
 
 # ----------------------------
-# Results grid: 5 columns per row (full-width)
-# Clicking the address sets selected_idx to highlight on the map
+# Results Grid
 # ----------------------------
 if results:
     st.markdown(
@@ -512,7 +573,6 @@ if results:
                     use_container_width=True
                 )
 
-                # Style the last-created button as a link
                 st.markdown(
                     "<script>"
                     "var btns = window.parent.document.querySelectorAll('.stButton button');"
@@ -536,12 +596,9 @@ if results:
     )
 
 # ----------------------------
-# Map (below the grid) with basemap fix:
-# - If MAPBOX_TOKEN is available, use Mapbox
-# - Otherwise use CARTO provider (no token required)
+# Map
 # ----------------------------
 if results and show_map:
-    # Build points for providers with valid coords
     points = []
     selected_point = None
 
@@ -570,7 +627,11 @@ if results and show_map:
                 "lon": lon,
                 "Providers": p.get("Providers", ""),
                 "Address": p.get("Address", ""),
-                "Distance": f"{p.get('DistanceMiles', float('nan')):.2f} mi" if "DistanceMiles" in p else "",
+                "Distance": (
+                    f"{p.get('DistanceMiles', float('nan')):.2f} mi"
+                    if "DistanceMiles" in p
+                    else ""
+                ),
                 "ResultNo": k,
                 "color": color,
                 "radius": radius,
@@ -578,7 +639,6 @@ if results and show_map:
 
     df_points = pd.DataFrame(points)
 
-    # Client address layer, if available
     client_layer = None
     selected_center = selected_point
 
@@ -603,7 +663,6 @@ if results and show_map:
         if selected_center is None:
             selected_center = (client_lat, client_lng)
 
-    # Providers layer
     providers_layer = pdk.Layer(
         "ScatterplotLayer",
         data=df_points,
@@ -616,7 +675,6 @@ if results and show_map:
         line_width_min_pixels=1,
     )
 
-    # Decide basemap provider
     deck_kwargs = {
         "initial_view_state": calc_view_state(
             [{"lat": r["lat"], "lon": r["lon"]} for r in points],
@@ -636,7 +694,6 @@ if results and show_map:
     }
 
     if MAPBOX_TOKEN:
-        # Use Mapbox if token provided
         pdk.settings.mapbox_api_key = MAPBOX_TOKEN
 
         deck = pdk.Deck(
@@ -644,8 +701,8 @@ if results and show_map:
             map_style="mapbox://styles/mapbox/streets-v12",
             **deck_kwargs,
         )
+
     else:
-        # Tokenless CARTO basemap
         deck = pdk.Deck(
             map_provider="carto",
             map_style="light",
